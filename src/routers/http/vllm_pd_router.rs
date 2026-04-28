@@ -150,11 +150,11 @@ impl VllmPDRouter {
         match self.kv_connector {
             // Mooncake uses the "xfer-<uuid>" format.
             KvConnector::Mooncake => Some(format!("xfer-{}", Uuid::new_v4())),
-            // MoRI-IO uses the "tx<uuid-no-dashes>" format to match MoRIIOConstants.TRANSFER_PREFIX.
+            // MoRI-IO uses the "tx-<uuid-no-dashes>" format to match MoRIIOConstants.TRANSFER_PREFIX.
             KvConnector::MoriIO => Some(format!(
                 "{}-{}",
                 MORIIO_TRANSFER_PREFIX,
-                Uuid::new_v4().to_string().replace('-', "")
+                Uuid::new_v4().simple()
             )),
             KvConnector::Nixl => None,
         }
