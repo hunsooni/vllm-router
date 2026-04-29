@@ -45,8 +45,7 @@ pub enum MoriIOTransferMode {
     Write,
 }
 
-/// MoRI-IO-specific service registration data. The base fields are flattened so
-/// the wire format is identical to `ServiceRegistration` plus `transfer_mode`.
+/// MoRI-IO-specific service registration data.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MoriIOServiceRegistration {
     #[serde(flatten)]
