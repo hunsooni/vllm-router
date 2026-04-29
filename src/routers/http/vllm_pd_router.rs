@@ -814,10 +814,16 @@ impl VllmPDRouter {
         // task is always guaranteed to execute (unlike fire-and-forget tokio::spawn, which
         // can be silently dropped under load) and both HTTP sends start at the same time.
         if let Some(write_prefill_str) = moriio_write_prefill_str {
+            self.start_profiling(&format!("http://{}", prefill_base_http))
+                .await;
             let http_client = self.http_client.clone();
             let prefill_url = format!("http://{}{}", prefill_base_http, path);
             let prefill_request_id = request_id.clone();
             let prefill_dp_rank_copy = prefill_dp_rank;
+            let enable_profiling = self.enable_profiling;
+            let profiling_tasks = self.profiling_tasks.clone();
+            let pd_router = self.pd_router.clone();
+            let prefill_base_http_clone = prefill_base_http.clone();
             let prefill_fut = async move {
                 let mut builder = http_client
                     .post(&prefill_url)
@@ -830,6 +836,14 @@ impl VllmPDRouter {
                         resp.status()
                     ),
                     Err(e) => warn!("MoRI-IO WRITE prefill request failed: {}", e),
+                }
+                if enable_profiling {
+                    let worker_url = format!("http://{}", prefill_base_http_clone);
+                    let mut tasks = profiling_tasks.lock().await;
+                    if let Some(handle) = tasks.remove(&worker_url) {
+                        handle.abort();
+                    }
+                    pd_router.stop_profiling(&worker_url).await;
                 }
             };
             let decode_fut = otel_http::send_client_request(
