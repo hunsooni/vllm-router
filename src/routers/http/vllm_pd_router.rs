@@ -969,11 +969,29 @@ impl VllmPDRouter {
                 }
                 match result {
                     Ok(resp) if resp.status().is_success() => {
-                        debug!(
-                            "MoRI-IO WRITE prefill completed with status {}",
-                            resp.status()
-                        );
-                        Ok(())
+                        let status = resp.status();
+                        match resp.bytes().await {
+                            Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                                Ok(json) => {
+                                    debug!(
+                                        "MoRI-IO WRITE prefill completed with status {}",
+                                        status
+                                    );
+                                    Ok(Some(json))
+                                }
+                                Err(_) => {
+                                    debug!(
+                                        "MoRI-IO WRITE prefill completed with status {} (non-JSON body)",
+                                        status
+                                    );
+                                    Ok(None)
+                                }
+                            },
+                            Err(e) => {
+                                warn!("MoRI-IO WRITE prefill: failed to read response body: {}", e);
+                                Ok(None)
+                            }
+                        }
                     }
                     Ok(resp) => {
                         let status = resp.status();
@@ -997,16 +1015,19 @@ impl VllmPDRouter {
                 },
             );
             let (prefill_result, decode_result) = tokio::join!(prefill_fut, decode_fut);
-            if let Err(prefill_err) = prefill_result {
-                let duration = start_time.elapsed();
-                RouterMetrics::record_pd_request(path);
-                RouterMetrics::record_pd_request_duration(path, duration);
-                RouterMetrics::record_pd_prefill_request(prefill_http);
-                return Err(format!(
-                    "Prefill request failed to {}: {}",
-                    prefill_http, prefill_err
-                ));
-            }
+            let write_prefill_response_json: Option<Value> = match prefill_result {
+                Err(prefill_err) => {
+                    let duration = start_time.elapsed();
+                    RouterMetrics::record_pd_request(path);
+                    RouterMetrics::record_pd_request_duration(path, duration);
+                    RouterMetrics::record_pd_prefill_request(prefill_http);
+                    return Err(format!(
+                        "Prefill request failed to {}: {}",
+                        prefill_http, prefill_err
+                    ));
+                }
+                Ok(json) => json,
+            };
             let decode_response = match decode_result {
                 Ok(resp) => resp,
                 Err(e) => {
@@ -1025,7 +1046,7 @@ impl VllmPDRouter {
             return self
                 .handle_decode_response(
                     decode_response,
-                    None, // WRITE mode: no prefill response JSON for logprobs
+                    write_prefill_response_json.as_ref(),
                     path,
                     prefill_http,
                     decode_http,
