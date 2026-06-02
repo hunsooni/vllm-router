@@ -80,6 +80,12 @@ pub struct RouterConfig {
     /// KV connector type for PD disaggregation
     #[serde(default)]
     pub kv_connector: KvConnector,
+    /// LMCache decode init port (used when kv_connector = lmcache)
+    #[serde(default)]
+    pub lmcache_decode_init_port: Option<u16>,
+    /// LMCache decode alloc port (used when kv_connector = lmcache)
+    #[serde(default)]
+    pub lmcache_decode_alloc_port: Option<u16>,
 }
 
 fn default_profile_timeout_secs() -> u64 {
@@ -121,6 +127,10 @@ pub enum KvConnector {
     #[serde(rename = "moriio")]
     #[value(name = "moriio")]
     MoriIO,
+    /// LMCache push-based KV transfer (prefill pushes KV to decode via LMCache engine)
+    #[serde(rename = "lmcache")]
+    #[value(name = "lmcache")]
+    LMCache,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -479,6 +489,8 @@ impl Default for RouterConfig {
             enable_profiling: false,
             profile_timeout_secs: default_profile_timeout_secs(),
             kv_connector: KvConnector::default(),
+            lmcache_decode_init_port: None,
+            lmcache_decode_alloc_port: None,
         }
     }
 }
@@ -1053,6 +1065,8 @@ mod tests {
             enable_profiling: false,
             profile_timeout_secs: default_profile_timeout_secs(),
             kv_connector: KvConnector::default(),
+            lmcache_decode_init_port: None,
+            lmcache_decode_alloc_port: None,
         };
 
         assert!(config.mode.is_pd_mode());
@@ -1119,6 +1133,8 @@ mod tests {
             enable_profiling: false,
             profile_timeout_secs: default_profile_timeout_secs(),
             kv_connector: KvConnector::default(),
+            lmcache_decode_init_port: None,
+            lmcache_decode_alloc_port: None,
         };
 
         assert!(!config.mode.is_pd_mode());
@@ -1181,6 +1197,8 @@ mod tests {
             enable_profiling: false,
             profile_timeout_secs: default_profile_timeout_secs(),
             kv_connector: KvConnector::default(),
+            lmcache_decode_init_port: None,
+            lmcache_decode_alloc_port: None,
         };
 
         assert!(config.has_service_discovery());

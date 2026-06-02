@@ -58,6 +58,10 @@ pub struct VllmPDRouter {
     kv_connector: KvConnector,
     /// Mooncake bootstrap info: prefill base_url -> MooncakePrefillInfo
     mooncake_prefill_info: Arc<Mutex<HashMap<String, MooncakePrefillInfo>>>,
+    /// LMCache decode init port (for disagg_spec.receiver_init_port)
+    lmcache_decode_init_port: u16,
+    /// LMCache decode alloc port (for disagg_spec.receiver_alloc_port)
+    lmcache_decode_alloc_port: u16,
 }
 
 /// Transfer ID prefix used by MoRI-IO to correlate prefill and decode legs.
@@ -191,7 +195,8 @@ impl VllmPDRouter {
                 MORIIO_TRANSFER_PREFIX,
                 Uuid::new_v4().simple()
             )),
-            KvConnector::Nixl => None,
+            // LMCache uses the request_id directly (passed separately); no extra transfer_id.
+            KvConnector::Nixl | KvConnector::LMCache => None,
         }
     }
 
@@ -199,7 +204,14 @@ impl VllmPDRouter {
     ///
     /// Returns an error for MoRI-IO when no transfer mode has been registered yet, so that
     /// requests are not silently dispatched in READ mode when no instances have registered.
-    fn build_prefill_kv_transfer_params(&self, transfer_id: Option<&str>) -> Result<Value, String> {
+    ///
+    /// `request_id` and `decode_base_url` are only used for LMCache (ignored by other connectors).
+    fn build_prefill_kv_transfer_params(
+        &self,
+        transfer_id: Option<&str>,
+        request_id: &str,
+        decode_base_url: &str,
+    ) -> Result<Value, String> {
         match self.kv_connector {
             KvConnector::Mooncake => Ok(json!({
                 "do_remote_decode": true,
@@ -246,6 +258,29 @@ impl VllmPDRouter {
                 "remote_host": serde_json::Value::Null,
                 "remote_port": serde_json::Value::Null
             })),
+            KvConnector::LMCache => {
+                // Extract hostname from decode_base_url (e.g. "http://10.0.0.2:8083" -> "10.0.0.2")
+                let receiver_host = url::Url::parse(decode_base_url)
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_string()))
+                    .or_else(|| {
+                        // Fallback: strip scheme and port manually
+                        let stripped = decode_base_url
+                            .trim_start_matches("http://")
+                            .trim_start_matches("https://");
+                        stripped.split(':').next().map(|h| h.to_string())
+                    })
+                    .unwrap_or_else(|| decode_base_url.to_string());
+
+                Ok(json!({
+                    "disagg_spec": {
+                        "req_id": request_id,
+                        "receiver_host": receiver_host,
+                        "receiver_init_port": self.lmcache_decode_init_port,
+                        "receiver_alloc_port": self.lmcache_decode_alloc_port,
+                    }
+                }))
+            }
         }
     }
 
@@ -304,6 +339,10 @@ impl VllmPDRouter {
                 }
             }
             KvConnector::Nixl => Some(prefill_response_json?.get("kv_transfer_params")?.clone()),
+            // LMCache handles KV transfer internally via its engine.
+            // The decode request only needs the same X-Request-Id as the prefill request;
+            // no special kv_transfer_params are required in the decode body.
+            KvConnector::LMCache => None,
         }
     }
 
@@ -773,21 +812,27 @@ impl VllmPDRouter {
         // Generate a connector-specific transfer_id (None for NIXL)
         let transfer_id = self.generate_transfer_id();
 
-        // Add kv_transfer_params for KV connector support at top level
-        prefill_request["kv_transfer_params"] =
-            self.build_prefill_kv_transfer_params(transfer_id.as_deref())?;
+        let (prefill_base_http, prefill_dp_rank) =
+            extract_base_http_and_dp_rank(prefill_http, self.intra_node_data_parallel_size);
+        let (decode_base_http, decode_dp_rank) =
+            extract_base_http_and_dp_rank(decode_http, self.intra_node_data_parallel_size);
+
+        // Add kv_transfer_params for KV connector support at top level.
+        // For LMCache, decode_base_http is needed to populate disagg_spec.receiver_host.
+        let decode_url_for_lmcache = format!("http://{}", decode_base_http);
+        prefill_request["kv_transfer_params"] = self.build_prefill_kv_transfer_params(
+            transfer_id.as_deref(),
+            &request_id,
+            &decode_url_for_lmcache,
+        )?;
 
         debug!(
             "Added kv_transfer_params to prefill request for {:?} connector",
             self.kv_connector
         );
 
-        let (prefill_base_http, prefill_dp_rank) =
-            extract_base_http_and_dp_rank(prefill_http, self.intra_node_data_parallel_size);
-        let (decode_base_http, decode_dp_rank) =
-            extract_base_http_and_dp_rank(decode_http, self.intra_node_data_parallel_size);
-
-        // Concurrent dispatch: e.g. MoRI-IO WRITE mode
+        // Concurrent dispatch: only MoRI-IO WRITE mode.
+        // LMCache uses sequential dispatch (prefill must complete before decode starts).
         let is_concurrent_dispatch = matches!(self.kv_connector, KvConnector::MoriIO)
             && matches!(self.moriio_transfer_mode(), Some(MoriIOTransferMode::Write));
 
@@ -1155,9 +1200,14 @@ impl VllmPDRouter {
         // Generate a connector-specific transfer_id (None for NIXL)
         let transfer_id = self.generate_transfer_id();
 
-        // Add kv_transfer_params for KV connector support at top level
+        // Add kv_transfer_params for KV connector support at top level.
+        // For LMCache, decode_worker.base_url() is needed to populate disagg_spec.receiver_host.
         prefill_request["kv_transfer_params"] = self
-            .build_prefill_kv_transfer_params(transfer_id.as_deref())
+            .build_prefill_kv_transfer_params(
+                transfer_id.as_deref(),
+                &request_id,
+                decode_worker.base_url(),
+            )
             .map_err(|reason| PDRouterError::InvalidConfiguration { reason })?;
 
         debug!(
@@ -1331,6 +1381,12 @@ impl VllmPDRouter {
                     prefill_base_url
                 );
             }
+        } else if matches!(self.kv_connector, KvConnector::LMCache) {
+            // LMCache: KV is transferred internally by the LMCache engine via disagg_spec.
+            // The decode request uses the original request body unchanged; the same
+            // X-Request-Id header ensures LMCache correlates the prefilled KV on the
+            // decode side.
+            debug!("LMCache connector: decode request uses original request without kv_transfer_params");
         } else {
             // Sequential dispatch (NIXL, MoRI-IO READ): extract kv_transfer_params from prefill response
             if let Some(mut params) = kv_transfer_params {
@@ -1572,6 +1628,8 @@ impl VllmPDRouter {
                 intra_node_data_parallel_size: ctx.router_config.intra_node_data_parallel_size,
                 kv_connector,
                 mooncake_prefill_info: Arc::new(Mutex::new(HashMap::new())),
+                lmcache_decode_init_port: ctx.router_config.lmcache_decode_init_port.unwrap_or(8100),
+                lmcache_decode_alloc_port: ctx.router_config.lmcache_decode_alloc_port.unwrap_or(8101),
             })
         } else {
             // Direct URL mode (same as PdRouterBase)
@@ -1660,6 +1718,8 @@ impl VllmPDRouter {
                 intra_node_data_parallel_size: ctx.router_config.intra_node_data_parallel_size,
                 kv_connector,
                 mooncake_prefill_info,
+                lmcache_decode_init_port: ctx.router_config.lmcache_decode_init_port.unwrap_or(8100),
+                lmcache_decode_alloc_port: ctx.router_config.lmcache_decode_alloc_port.unwrap_or(8101),
             })
         }
     }
