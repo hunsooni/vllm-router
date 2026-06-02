@@ -95,8 +95,11 @@ struct Router {
     // OpenTelemetry tracing
     enable_trace: bool,
     otlp_traces_endpoint: Option<String>,
-    // KV connector for PD disaggregation ("nixl" or "mooncake")
+    // KV connector for PD disaggregation ("nixl", "mooncake", "moriio", or "lmcache")
     kv_connector: String,
+    // LMCache decode ports (used when kv_connector = "lmcache")
+    lmcache_decode_init_port: Option<u16>,
+    lmcache_decode_alloc_port: Option<u16>,
 }
 
 impl Router {
@@ -228,15 +231,18 @@ impl Router {
                 "nixl" => config::KvConnector::Nixl,
                 "mooncake" => config::KvConnector::Mooncake,
                 "moriio" => config::KvConnector::MoriIO,
+                "lmcache" => config::KvConnector::LMCache,
                 other => {
                     return Err(config::ConfigError::ValidationFailed {
                         reason: format!(
-                            "Invalid kv_connector '{}': expected 'nixl', 'mooncake', or 'moriio'",
+                            "Invalid kv_connector '{}': expected 'nixl', 'mooncake', 'moriio', or 'lmcache'",
                             other
                         ),
                     });
                 }
             },
+            lmcache_decode_init_port: self.lmcache_decode_init_port,
+            lmcache_decode_alloc_port: self.lmcache_decode_alloc_port,
         })
     }
 }
@@ -310,6 +316,9 @@ impl Router {
         otlp_traces_endpoint = None,
         // KV connector default (PD disaggregation)
         kv_connector = String::from("nixl"),
+        // LMCache port defaults
+        lmcache_decode_init_port = None,
+        lmcache_decode_alloc_port = None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -372,6 +381,8 @@ impl Router {
         enable_trace: bool,
         otlp_traces_endpoint: Option<String>,
         kv_connector: String,
+        lmcache_decode_init_port: Option<u16>,
+        lmcache_decode_alloc_port: Option<u16>,
     ) -> PyResult<Self> {
         Ok(Router {
             host,
@@ -433,6 +444,8 @@ impl Router {
             enable_trace,
             otlp_traces_endpoint,
             kv_connector,
+            lmcache_decode_init_port,
+            lmcache_decode_alloc_port,
         })
     }
 

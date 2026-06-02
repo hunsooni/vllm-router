@@ -335,9 +335,17 @@ struct CliArgs {
     #[arg(long, default_value_t = false)]
     profile: bool,
 
-    /// KV connector type for PD disaggregation (nixl or mooncake)
+    /// KV connector type for PD disaggregation (nixl, mooncake, moriio, or lmcache)
     #[arg(long, value_enum, default_value_t = KvConnector::Nixl)]
     kv_connector: KvConnector,
+
+    /// LMCache decode init port (used when --kv-connector lmcache; all decode workers use this port)
+    #[arg(long)]
+    lmcache_decode_init_port: Option<u16>,
+
+    /// LMCache decode alloc port (used when --kv-connector lmcache; all decode workers use this port)
+    #[arg(long)]
+    lmcache_decode_alloc_port: Option<u16>,
 }
 
 impl CliArgs {
@@ -557,6 +565,8 @@ impl CliArgs {
             enable_profiling: self.profile,
             profile_timeout_secs: 10, // Default profiling timeout
             kv_connector: self.kv_connector,
+            lmcache_decode_init_port: self.lmcache_decode_init_port,
+            lmcache_decode_alloc_port: self.lmcache_decode_alloc_port,
         })
     }
 

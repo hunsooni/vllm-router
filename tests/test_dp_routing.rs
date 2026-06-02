@@ -279,6 +279,8 @@ mod dp_e2e_tests {
             enable_profiling: false,
             profile_timeout_secs: 30,
             kv_connector: vllm_router_rs::config::KvConnector::Nixl,
+            lmcache_decode_init_port: None,
+            lmcache_decode_alloc_port: None,
         }
     }
 
@@ -327,6 +329,8 @@ mod dp_e2e_tests {
             enable_profiling: false,
             profile_timeout_secs: 30,
             kv_connector: vllm_router_rs::config::KvConnector::Nixl,
+            lmcache_decode_init_port: None,
+            lmcache_decode_alloc_port: None,
         }
     }
 

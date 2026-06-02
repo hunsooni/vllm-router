@@ -51,8 +51,11 @@ class RouterArgs:
     bootstrap_port_annotation: str = "vllm.ai/bootstrap-port"
     # ZMQ service discovery address for vLLM PD mode
     vllm_discovery_address: Optional[str] = None
-    # KV connector for PD disaggregation (nixl pull-based or mooncake push-based)
+    # KV connector for PD disaggregation (nixl, mooncake, moriio, or lmcache)
     kv_connector: str = "nixl"
+    # LMCache decode ports (used when kv_connector = "lmcache")
+    lmcache_decode_init_port: Optional[int] = None
+    lmcache_decode_alloc_port: Optional[int] = None
     # Prometheus configuration
     prometheus_port: Optional[int] = None
     prometheus_host: Optional[str] = None
@@ -322,11 +325,28 @@ class RouterArgs:
             f"--{prefix}kv-connector",
             type=str,
             default=RouterArgs.kv_connector,
-            choices=["nixl", "mooncake", "moriio"],
+            choices=["nixl", "mooncake", "moriio", "lmcache"],
             help="KV connector type for PD disaggregation. 'nixl' (default) uses NIXL's "
             "pull-based KV transfer; 'mooncake' uses Mooncake's push-based protocol "
             "(queries each prefill node's bootstrap server for engine_id per DP rank); "
-            "'moriio' uses the MoRI-IO connector (either READ or WRITE modes).",
+            "'moriio' uses the MoRI-IO connector (either READ or WRITE modes); "
+            "'lmcache' uses LMCache's push-based protocol (prefill pushes KV to decode "
+            "via LMCache engine, requires --lmcache-decode-init-port and "
+            "--lmcache-decode-alloc-port).",
+        )
+        parser.add_argument(
+            f"--{prefix}lmcache-decode-init-port",
+            type=int,
+            default=None,
+            help="LMCache decode init port. Used when --kv-connector lmcache. "
+            "All decode workers are expected to listen on this port for KV init (default: 8100).",
+        )
+        parser.add_argument(
+            f"--{prefix}lmcache-decode-alloc-port",
+            type=int,
+            default=None,
+            help="LMCache decode alloc port. Used when --kv-connector lmcache. "
+            "All decode workers are expected to listen on this port for KV alloc (default: 8101).",
         )
         # Prometheus configuration
         parser.add_argument(
