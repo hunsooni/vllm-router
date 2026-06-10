@@ -339,13 +339,13 @@ struct CliArgs {
     #[arg(long, value_enum, default_value_t = KvConnector::Nixl)]
     kv_connector: KvConnector,
 
-    /// LMCache decode init port (used when --kv-connector lmcache; all decode workers use this port)
-    #[arg(long)]
-    lmcache_decode_init_port: Option<u16>,
+    /// LMCache decode init port list (used when --kv-connector lmcache; comma-separated, one per TP rank, e.g. 9100,9101)
+    #[arg(long, value_delimiter = ',')]
+    lmcache_decode_init_port: Option<Vec<u16>>,
 
-    /// LMCache decode alloc port (used when --kv-connector lmcache; all decode workers use this port)
-    #[arg(long)]
-    lmcache_decode_alloc_port: Option<u16>,
+    /// LMCache decode alloc port list (used when --kv-connector lmcache; comma-separated, one per TP rank, e.g. 9200,9201)
+    #[arg(long, value_delimiter = ',')]
+    lmcache_decode_alloc_port: Option<Vec<u16>>,
 }
 
 impl CliArgs {
@@ -565,8 +565,8 @@ impl CliArgs {
             enable_profiling: self.profile,
             profile_timeout_secs: 10, // Default profiling timeout
             kv_connector: self.kv_connector,
-            lmcache_decode_init_port: self.lmcache_decode_init_port,
-            lmcache_decode_alloc_port: self.lmcache_decode_alloc_port,
+            lmcache_decode_init_port: self.lmcache_decode_init_port.clone(),
+            lmcache_decode_alloc_port: self.lmcache_decode_alloc_port.clone(),
         })
     }
 
