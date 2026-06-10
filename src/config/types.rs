@@ -80,12 +80,12 @@ pub struct RouterConfig {
     /// KV connector type for PD disaggregation
     #[serde(default)]
     pub kv_connector: KvConnector,
-    /// LMCache decode init port (used when kv_connector = lmcache)
+    /// LMCache decode init port list (used when kv_connector = lmcache; one port per TP rank)
     #[serde(default)]
-    pub lmcache_decode_init_port: Option<u16>,
-    /// LMCache decode alloc port (used when kv_connector = lmcache)
+    pub lmcache_decode_init_port: Option<Vec<u16>>,
+    /// LMCache decode alloc port list (used when kv_connector = lmcache; one port per TP rank)
     #[serde(default)]
-    pub lmcache_decode_alloc_port: Option<u16>,
+    pub lmcache_decode_alloc_port: Option<Vec<u16>>,
 }
 
 fn default_profile_timeout_secs() -> u64 {

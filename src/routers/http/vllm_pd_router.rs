@@ -58,10 +58,10 @@ pub struct VllmPDRouter {
     kv_connector: KvConnector,
     /// Mooncake bootstrap info: prefill base_url -> MooncakePrefillInfo
     mooncake_prefill_info: Arc<Mutex<HashMap<String, MooncakePrefillInfo>>>,
-    /// LMCache decode init port (for disagg_spec.receiver_init_port)
-    lmcache_decode_init_port: u16,
-    /// LMCache decode alloc port (for disagg_spec.receiver_alloc_port)
-    lmcache_decode_alloc_port: u16,
+    /// LMCache decode init port list (for disagg_spec.receiver_init_port; one per TP rank)
+    lmcache_decode_init_port: Vec<u16>,
+    /// LMCache decode alloc port list (for disagg_spec.receiver_alloc_port; one per TP rank)
+    lmcache_decode_alloc_port: Vec<u16>,
 }
 
 /// Transfer ID prefix used by MoRI-IO to correlate prefill and decode legs.
@@ -278,7 +278,8 @@ impl VllmPDRouter {
                         "receiver_host": receiver_host,
                         "receiver_init_port": self.lmcache_decode_init_port,
                         "receiver_alloc_port": self.lmcache_decode_alloc_port,
-                    }
+                    },
+                    "ret_first_tok": true,
                 }))
             }
         }
@@ -951,6 +952,28 @@ impl VllmPDRouter {
             );
         }
 
+        // LMCache: extract first_tok from prefill response and pass to decode.
+        if matches!(self.kv_connector, KvConnector::LMCache) {
+            if let Some(first_tok) = prefill_response_json
+                .as_ref()
+                .and_then(|j| j.get("kv_transfer_params"))
+                .and_then(|kv| kv.get("first_tok"))
+                .cloned()
+            {
+                decode_request["kv_transfer_params"] = json!({"first_token_id": first_tok});
+                if let Some(n) = decode_request.get("max_tokens").and_then(|v| v.as_u64()) {
+                    if n > 1 {
+                        decode_request["max_tokens"] = json!(n - 1);
+                    }
+                }
+                if let Some(n) = decode_request.get("max_completion_tokens").and_then(|v| v.as_u64()) {
+                    if n > 1 {
+                        decode_request["max_completion_tokens"] = json!(n - 1);
+                    }
+                }
+            }
+        }
+
         let decode_request_str = serde_json::to_string(&decode_request)
             .map_err(|e| format!("Failed to serialize decode request: {}", e))?;
 
@@ -1382,11 +1405,25 @@ impl VllmPDRouter {
                 );
             }
         } else if matches!(self.kv_connector, KvConnector::LMCache) {
-            // LMCache: KV is transferred internally by the LMCache engine via disagg_spec.
-            // The decode request uses the original request body unchanged; the same
-            // X-Request-Id header ensures LMCache correlates the prefilled KV on the
-            // decode side.
-            debug!("LMCache connector: decode request uses original request without kv_transfer_params");
+            // LMCache: extract first_tok from prefill response and pass to decode.
+            // Prefill already generated the first output token; decode generates the rest.
+            if let Some(first_tok) = prefill_response_json
+                .get("kv_transfer_params")
+                .and_then(|kv| kv.get("first_tok"))
+                .cloned()
+            {
+                decode_request["kv_transfer_params"] = json!({"first_token_id": first_tok});
+                if let Some(n) = decode_request.get("max_tokens").and_then(|v| v.as_u64()) {
+                    if n > 1 {
+                        decode_request["max_tokens"] = json!(n - 1);
+                    }
+                }
+                if let Some(n) = decode_request.get("max_completion_tokens").and_then(|v| v.as_u64()) {
+                    if n > 1 {
+                        decode_request["max_completion_tokens"] = json!(n - 1);
+                    }
+                }
+            }
         } else {
             // Sequential dispatch (NIXL, MoRI-IO READ): extract kv_transfer_params from prefill response
             if let Some(mut params) = kv_transfer_params {
@@ -1628,8 +1665,8 @@ impl VllmPDRouter {
                 intra_node_data_parallel_size: ctx.router_config.intra_node_data_parallel_size,
                 kv_connector,
                 mooncake_prefill_info: Arc::new(Mutex::new(HashMap::new())),
-                lmcache_decode_init_port: ctx.router_config.lmcache_decode_init_port.unwrap_or(8100),
-                lmcache_decode_alloc_port: ctx.router_config.lmcache_decode_alloc_port.unwrap_or(8101),
+                lmcache_decode_init_port: ctx.router_config.lmcache_decode_init_port.clone().unwrap_or_else(|| vec![8100]),
+                lmcache_decode_alloc_port: ctx.router_config.lmcache_decode_alloc_port.clone().unwrap_or_else(|| vec![8101]),
             })
         } else {
             // Direct URL mode (same as PdRouterBase)
@@ -1718,8 +1755,8 @@ impl VllmPDRouter {
                 intra_node_data_parallel_size: ctx.router_config.intra_node_data_parallel_size,
                 kv_connector,
                 mooncake_prefill_info,
-                lmcache_decode_init_port: ctx.router_config.lmcache_decode_init_port.unwrap_or(8100),
-                lmcache_decode_alloc_port: ctx.router_config.lmcache_decode_alloc_port.unwrap_or(8101),
+                lmcache_decode_init_port: ctx.router_config.lmcache_decode_init_port.clone().unwrap_or_else(|| vec![8100]),
+                lmcache_decode_alloc_port: ctx.router_config.lmcache_decode_alloc_port.clone().unwrap_or_else(|| vec![8101]),
             })
         }
     }
