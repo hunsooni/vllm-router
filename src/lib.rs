@@ -97,9 +97,9 @@ struct Router {
     otlp_traces_endpoint: Option<String>,
     // KV connector for PD disaggregation ("nixl", "mooncake", "moriio", or "lmcache")
     kv_connector: String,
-    // LMCache decode ports (used when kv_connector = "lmcache")
-    lmcache_decode_init_port: Option<u16>,
-    lmcache_decode_alloc_port: Option<u16>,
+    // LMCache decode port lists (used when kv_connector = "lmcache"; one port per TP rank)
+    lmcache_decode_init_port: Option<Vec<u16>>,
+    lmcache_decode_alloc_port: Option<Vec<u16>>,
 }
 
 impl Router {
@@ -241,8 +241,8 @@ impl Router {
                     });
                 }
             },
-            lmcache_decode_init_port: self.lmcache_decode_init_port,
-            lmcache_decode_alloc_port: self.lmcache_decode_alloc_port,
+            lmcache_decode_init_port: self.lmcache_decode_init_port.clone(),
+            lmcache_decode_alloc_port: self.lmcache_decode_alloc_port.clone(),
         })
     }
 }
@@ -381,8 +381,8 @@ impl Router {
         enable_trace: bool,
         otlp_traces_endpoint: Option<String>,
         kv_connector: String,
-        lmcache_decode_init_port: Option<u16>,
-        lmcache_decode_alloc_port: Option<u16>,
+        lmcache_decode_init_port: Option<Vec<u16>>,
+        lmcache_decode_alloc_port: Option<Vec<u16>>,
     ) -> PyResult<Self> {
         Ok(Router {
             host,
